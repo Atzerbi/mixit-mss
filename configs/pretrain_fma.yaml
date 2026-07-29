@@ -1,0 +1,38 @@
+# Example config for MixIT pre-training on FMA (Saijo & Bando, Sec. 4.1 & 4.3).
+
+# Stage 0 — offline manifest (scripts/build_fma_manifest.py)
+preprocess:
+  clip_dir: /path/to/fma_large    # FMA audio root ("large" subset in the paper)
+  manifest_out: fma_manifest.json
+  target_sr: 44100                # drop < 44.1 kHz, downsample > 44.1 kHz
+  clip_seconds: 10.0              # segment length
+  overlap_seconds: 5.0            # segment overlap
+  silence_interval: 1.0           # power computed over 1 s intervals
+  max_silence_seconds: 5.0        # discard segment if > 5 s silence
+  silence_threshold: 1.0e-4       # tune to your data (MP3-sourced FMA)
+
+# Stage 1 — pre-training
+data:
+  manifest: fma_manifest.json
+  train_seconds: 6.0              # training input length (NOT 10)
+  channels: 2                     # stereo, M=2
+
+model:
+  n_srcs: 12                      # over-provisioned outputs (N >> K=4)
+  stereo: true
+  n_layers: 6                     # medium model (B=6, D=128 in the paper)
+  emb_dim: 128
+  stft_size: 2048                 # must match external STFT n_fft
+  hop_length: 512
+  # band_split: Q=62 bands (fixed inside the model)
+
+train:
+  batch_size: 128                 # paper value (needs multiple GPUs)
+  lr: 1.0e-3                      # peak (5e-4 for the large model)
+  lambda_sparse: 0.1              # sparsity loss weight (tune)
+  steps: 150000                   # ~150 epochs * ~1000 steps
+  warmup_steps: 5000              # linear 0 -> peak
+  lr_decay_per_epoch: 0.965
+  weight_decay: 1.0e-2            # AdamW
+  grad_clip_l2: 5.0
+  optimizer: adamw

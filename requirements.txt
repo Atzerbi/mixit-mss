@@ -1,0 +1,5 @@
+torch>=2.0,<3.0
+torchaudio>=2.0
+numpy
+packaging
+rotary-embedding-torch==0.6.1   # richiesto dal BS-Locoformer reale (RoPE)

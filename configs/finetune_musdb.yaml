@@ -1,0 +1,32 @@
+# Example config for supervised fine-tuning on MUSDB18.
+
+# Stage 0b - offline SAD (scripts/build_musdb_sad.py)
+sad:
+  musdb_root: /path/to/musdb18hq/train
+  manifest_out: musdb_sad.json
+  segment_seconds: 6.0            # L in the BSRNN SAD recipe
+  # energy thresholding: quantile 0.15, gamma 1e-3, eps 1e-5, salient if >50% chunks
+
+data:
+  musdb_root: /path/to/musdb18hq/train
+  sad_manifest: musdb_sad.json    # salient (non-silent) stem segments
+  segment_len: 264600             # 6 s @ 44.1 kHz (paper fine-tune input)
+  sr: 44100
+  channels: 2
+  dynamic_mixing: true            # RMS-norm, gain [-10,10] dB, drop stem p=0.05
+
+model:
+  n_srcs: 12
+  stereo: true
+  n_layers: 6
+  emb_dim: 128
+  stft_size: 2048
+  hop_length: 512
+  pretrained: pretrained_mixit.pth
+
+train:
+  batch_size: 2
+  lr: 5.0e-4
+  steps: 900000                   # ~900 epochs in the paper
+  use_pit: false                  # false = direct loss after channel selection
+  optimizer: adam
