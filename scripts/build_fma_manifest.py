@@ -1,4 +1,4 @@
-"""Offline pre-processing: build the FMA segment manifest (paper recipe, Sec. 4.1).
+"""Offline pre-processing: build the FMA segment manifest.
 
 Scans an FMA audio folder, applies the sample-rate policy (drop < 44.1 kHz,
 downsample > 44.1 kHz) and the silence rule (10 s segments, 5 s overlap, discard
@@ -15,7 +15,6 @@ Then pre-train with:
 import argparse
 from mixit_mss.fma import build_manifest
 
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip_dir", required=True, help="FMA audio root")
@@ -24,7 +23,6 @@ def main():
                     help="mean power below this = silent interval (tune to your data)")
     args = ap.parse_args()
     build_manifest(args.clip_dir, args.out, silence_threshold=args.silence_threshold)
-
 
 if __name__ == "__main__":
     main()

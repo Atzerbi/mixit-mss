@@ -1,4 +1,4 @@
-"""Stage 1 — MixIT pre-training on unlabeled data (FMA).
+"""Stage 1 - MixIT pre-training on unlabeled data (FMA).
 
 Usage (stub model, for verification):
     python scripts/pretrain_mixit.py --stub --synthetic --steps 5
@@ -63,11 +63,13 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # Load dataset
     if args.manifest is not None or (args.synthetic and args.use_fma):
         ds = MoMFMADataset(manifest_path=args.manifest,
                            train_input_seconds=args.train_seconds,
                            _synthetic=args.synthetic)
     else:
+        # Synthesize dataset
         ds = MoMDataset(clip_dir=args.clip_dir, segment_len=args.segment_len,
                         n_channels=args.channels, _synthetic=args.synthetic)
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, drop_last=True)
