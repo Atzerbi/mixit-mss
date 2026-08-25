@@ -9,7 +9,6 @@ import itertools
 import torch
 from .losses import negative_snr
 
-
 def pit_loss(est, targets, loss_fn=negative_snr):
     """est, targets: [B, K, C, L]. Returns (loss, best_perm[B, K])."""
     B, K, C, L = est.shape
@@ -27,7 +26,6 @@ def pit_loss(est, targets, loss_fn=negative_snr):
             p = torch.tensor(perm, device=est.device).expand(B, K)
             best_perm = torch.where(imp[:, None], p, best_perm)
     return best.mean(), best_perm
-
 
 def direct_loss(est, targets, loss_fn=negative_snr):
     """Direct loss when the channel order is already fixed (post channel-selection).

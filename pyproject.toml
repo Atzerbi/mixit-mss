@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mixit-mss"
+version = "0.2.0"
+description = "MixIT unsupervised pre-training layer for music source separation, on top of BS-Locoformer"
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0,<3.0",
+    "torchaudio>=2.0",
+    "numpy",
+    "packaging",
+    "rotary-embedding-torch==0.6.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["mixit_mss*"]

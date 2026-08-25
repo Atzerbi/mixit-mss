@@ -62,12 +62,12 @@ Two-stage run with the real model (small config, synthetic data):
 
 ```bash
 # Stage 1: MixIT pre-training
-PYTHONPATH=. python scripts/pretrain_mixit.py --synthetic --steps 4 \
-    --segment_len 16384 --n_srcs 12 --n_layers 1 --emb_dim 32 --batch_size 1
+PYTHONPATH=. python scripts/pretrain_mixit.py --manifest fma_manifest.json --steps 10000 \
+    --segment_len 16384 --n_srcs 12 --n_layers 1 --emb_dim 32 --batch_size 4
 
 # Stage 2: channel selection + supervised fine-tuning
-PYTHONPATH=. python scripts/finetune_musdb.py --synthetic --pretrained pretrained_mixit.pth \
-    --steps 4 --segment_len 16384 --n_srcs 12 --n_layers 1 --emb_dim 32 --batch_size 1
+PYTHONPATH=. python scripts/finetune_musdb.py --pretrained pretrained_mixit.pth \
+    --steps 100 --segment_len 16384 --n_srcs 12 --n_layers 1 --emb_dim 32 --batch_size 4
 ```
 
 Add `--stub` to swap in a lightweight TF-domain stub instead of the real model (faster shape/flow checks). The `test_efficient_matches_exhaustive` test compares the least-squares solver against the exhaustive O(M^N) search: gap is 0 on the constructed case.
@@ -109,6 +109,34 @@ python scripts/pretrain_mixit.py --manifest fma_manifest.json \
 ```
 
 The one value to tune to your data is `--silence_threshold`: the paper defines silence via per-second power but does not give a numeric floor (FMA is MP3-sourced with reduced HF energy). Start at `1e-4` on RMS-scaled audio and inspect how many segments survive.
+
+## Checkpointing and resuming
+
+A 150-epoch pre-training runs for days, so the run has to survive being interrupted. Each save writes two files, atomically (temp file + rename — a job killed mid-write cannot corrupt the previous checkpoint):
+
+| file | contents | consumed by |
+|---|---|---|
+| `--out` (default `pretrained_mixit.pth`) | weights only | `inference.py`, `finetune_musdb.py`, the notebook |
+| `--ckpt_out` (default `<out>.ckpt`) | weights + AdamW moments + lr schedule + step counter | `--resume` |
+
+Continue an interrupted run — everything (moments, lr position, step count) is restored, so it is equivalent to never having stopped:
+```bash
+PYTHONPATH=. python scripts/pretrain_mixit.py --manifest fma_manifest.json \
+    --batch_size 1 --accum_steps 8 --resume
+```
+Pass the *same* hyperparameters as the original run: the lr schedule is rebuilt from `--warmup_steps`, `--steps_per_epoch` and `--lr_decay`, and the weights are loaded strictly, so a changed `--n_layers`/`--emb_dim` fails loudly instead of silently training a different model.
+
+A checkpoint produced before this file existed holds only weights. It can still be continued, but you must say where it stopped so the lr schedule is re-placed instead of restarting from warmup — the optimiser moments are unrecoverable and cause a brief loss bump over the following few hundred steps:
+```bash
+... --resume pretrained_mixit.pth --start_step 25000
+```
+
+Since a dropped SSH/VPN connection sends `SIGHUP` to the training process, launch it detached so the run outlives the session:
+```bash
+tmux new -s mixit    # then run the command inside, detach with Ctrl-b d
+# or:
+nohup PYTHONPATH=. python scripts/pretrain_mixit.py ... > train.log 2>&1 &
+```
 
 ## MUSDB fine-tuning recipe (implemented)
 

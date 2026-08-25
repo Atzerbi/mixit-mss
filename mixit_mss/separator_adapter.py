@@ -72,20 +72,19 @@ def build_bslocoformer_adapter(n_srcs=12, n_channels=2, stereo=True,
     model = BSLocoformerSeparator(
         num_spk=n_srcs, n_layers=n_layers, emb_dim=emb_dim,
         norm_type=kw.pop("norm_type", "rmsgroupnorm"),
-        num_groups=kw.pop("num_groups", 4),
-        n_heads=kw.pop("n_heads", 4),
+        num_groups=kw.pop("num_groups", 8),
+        n_heads=kw.pop("n_heads", 8),
         attention_dim=kw.pop("attention_dim", 128),
         pos_enc=kw.pop("pos_enc", "rope"),
         ffn_type=kw.pop("ffn_type", "swiglu_conv1d"),
         ffn_hidden_dim=kw.pop("ffn_hidden_dim", 384),
-        conv1d_kernel=kw.pop("conv1d_kernel", 4),
+        conv1d_kernel=kw.pop("conv1d_kernel", 8),
         conv1d_shift=kw.pop("conv1d_shift", 1),
         sample_rate=sample_rate, stft_size=stft_size,
         masking=kw.pop("masking", True), stereo=stereo,
     )
     return SeparatorAdapter(model, n_srcs=n_srcs, n_channels=n_channels,
                             stereo=stereo, n_fft=stft_size, hop_length=hop_length)
-
 
 # ---------------------------------------------------------------------------
 # TF-domain stub for fast tests without building the large model

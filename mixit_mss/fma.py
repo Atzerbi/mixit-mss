@@ -1,17 +1,17 @@
-"""FMA preprocessing and MoM loader — exact recipe from Saijo & Bando (Sec. 4.1, 4.3).
+"""FMA preprocessing and MoM loader.
 
 Two levels, faithful to the paper:
 
-PRE-PROCESSING (offline, Sec. 4.1)
+PRE-PROCESSING (offline)
   - Segment each track into 10-second clips with 5-second overlap.
-  - For each segment, compute signal power in 1-second intervals; DISCARD the
+  - For each segment, compute signal power in 1-second intervals. Discard the
     segment if it contains more than 5 seconds of silence.
   - Sample-rate policy: drop any audio whose sample rate is below 44.1 kHz;
     downsample anything above 44.1 kHz to 44.1 kHz.
   This produces a manifest of valid 10 s segments (paths + offsets).
 
-TRAINING (online, Sec. 4.3)
-  - The training input is 6 seconds long (NOT 10): a 6 s window is randomly
+TRAINING (online)
+  - The training input is L samples long: a L samples window is randomly
     cropped from each valid 10 s segment at load time.
   - A MoM is x1 + x2 from two different segments (ideally different tracks).
   - Stereo (M=2). Negative thresholded SNR is the loss (implemented in losses.py).
@@ -21,26 +21,22 @@ The manifest step is separated so it runs once; MoMFMADataset then streams from 
 
 import os
 import json
-import glob
 import math
 import random
 import torch
 
-
 # ---------------------------------------------------------------------------
-# Recipe constants (from the paper)
+# Constants
 # ---------------------------------------------------------------------------
-TARGET_SR = 44100          # Sec. 4.1: target sample rate
-CLIP_SECONDS = 10.0        # Sec. 4.1: segment length for pre-processing
-CLIP_OVERLAP = 5.0         # Sec. 4.1: overlap between segments
-SILENCE_INTERVAL = 1.0     # Sec. 4.1: power computed in 1 s intervals
-MAX_SILENCE_SECONDS = 5.0  # Sec. 4.1: discard if > 5 s of silence
-TRAIN_INPUT_SECONDS = 6.0  # Sec. 4.3: training input length
-
+TARGET_SR           = 44100     # target sample rate
+CLIP_SECONDS        = 10.0      # segment length for pre-processing
+CLIP_OVERLAP        = 5.0       # overlap between segments
+SILENCE_INTERVAL    = 1.0       # power computed in 1 s intervals
+MAX_SILENCE_SECONDS = 5.0       # discard if > 5 s of silence
+TRAIN_INPUT_SECONDS = 6.0       # training input length
 
 def _is_silent_interval(power, threshold):
     return power < threshold
-
 
 def scan_track_for_segments(wav, sr, silence_threshold,
                             clip_s=CLIP_SECONDS, overlap_s=CLIP_OVERLAP,
@@ -79,9 +75,8 @@ def scan_track_for_segments(wav, sr, silence_threshold,
         start += hop
     return valid
 
-
 def build_manifest(clip_dir, out_path, silence_threshold=1e-4,
-                   target_sr=TARGET_SR, exts=("*.wav", "*.flac", "*.mp3", "*.ogg"),
+                   target_sr=TARGET_SR, exts=(".wav", ".flac", ".mp3", ".ogg"),
                    verbose=True):
     """Offline pre-processing pass. Scans `clip_dir`, applies the sample-rate policy
     and the silence rule, and writes a JSON manifest of valid 10 s segments.
@@ -92,20 +87,36 @@ def build_manifest(clip_dir, out_path, silence_threshold=1e-4,
     """
     import torchaudio
 
-    files = sorted(sum((glob.glob(os.path.join(clip_dir, "**", e), recursive=True)
-                        for e in exts), []))
+    # robust recursive scan (os.walk is immune to glob '**' quirks) with
+    # case-insensitive extension matching (handles .MP3, .Mp3, etc.)
+    exts_lower = tuple(e.lower() for e in exts)
+    files = []
+    for root, _dirs, names in os.walk(clip_dir):
+        for name in names:
+            if name.lower().endswith(exts_lower):
+                files.append(os.path.join(root, name))
+    files.sort()
+    if verbose:
+        print(f"found {len(files)} audio files under {clip_dir}", flush=True)
     entries = []
     dropped_sr = 0
+    failed = 0
+    first_error = None
     for fi, path in enumerate(files):
+        # Load directly (single point of file access). Some torchaudio versions
+        # have a different/absent info() API, so we don't rely on it: we read the
+        # sample rate from load() itself.
         try:
-            info = torchaudio.info(path)
-        except Exception:
+            wav, orig_sr = torchaudio.load(path)      # [C, N], sr
+        except Exception as e:
+            failed += 1                               # corrupt file (FMA errata #41)
+            if first_error is None:
+                first_error = (path, repr(e))
             continue
-        orig_sr = info.sample_rate
         if orig_sr < target_sr:
             dropped_sr += 1
             continue                                  # Sec. 4.1: drop < 44.1 kHz
-        wav, sr = torchaudio.load(path)               # [C, N]
+        sr = orig_sr
         if sr > target_sr:
             wav = torchaudio.functional.resample(wav, sr, target_sr)  # downsample
         if wav.shape[0] == 1:
@@ -124,36 +135,42 @@ def build_manifest(clip_dir, out_path, silence_threshold=1e-4,
                    "silence_threshold": silence_threshold,
                    "segments": entries}, f)
     if verbose:
-        print(f"manifest: {len(entries)} valid segments "
-              f"({dropped_sr} files dropped for sr < {target_sr}) -> {out_path}",
-              flush=True)
+        print(f"manifest: {len(entries)} valid segments from {len(files)} files "
+              f"({dropped_sr} dropped for sr < {target_sr}, {failed} failed to open) "
+              f"-> {out_path}", flush=True)
+        if failed > 0 and first_error is not None:
+            print(f"  first failure: {first_error[0]}\n    -> {first_error[1]}", flush=True)
+            if failed == len(files):
+                print("  All files failed to open: this is almost certainly a missing "
+                      "audio backend (ffmpeg) for mp3 decoding, not corrupt data.\n"
+                      "  Check: python -c \"import torchaudio; "
+                      "print(torchaudio.list_audio_backends())\"", flush=True)
     return out_path
-
 
 # ---------------------------------------------------------------------------
 # Online MoM dataset streaming from a manifest
 # ---------------------------------------------------------------------------
 class MoMFMADataset(torch.utils.data.Dataset):
-    """Mixture-of-Mixtures over FMA valid segments (paper recipe).
+    """Mixture-of-Mixtures over FMA valid segments.
 
     At each __getitem__:
-      - load a 6 s random crop from segment `idx` (x1),
-      - load a 6 s random crop from another segment, preferably a different track (x2),
-      - return mom = x1 + x2  [2, L6],  mixtures = stack([x1, x2])  [2, 2, L6].
+      - load a L samples random crop from segment `idx` (x1),
+      - load a L samples random crop from another segment, preferably a different track (x2),
+      - return mom = x1 + x2  [2, L],  mixtures = stack([x1, x2])  [2, 2, L].
     """
 
     def __init__(self, manifest_path=None, manifest=None,
                  train_input_seconds=TRAIN_INPUT_SECONDS, target_sr=TARGET_SR,
                  avoid_same_track=True, rms_normalize=True, _synthetic=False):
-        self.sr = target_sr
-        self.L = int(round(train_input_seconds * target_sr))
-        self.clip_len = int(round(CLIP_SECONDS * target_sr))
-        self.avoid_same_track = avoid_same_track
-        self.rms_normalize = rms_normalize
-        self._synthetic = _synthetic
+        self.sr                 = target_sr
+        self.L                  = int(round(train_input_seconds * target_sr))
+        self.clip_len           = int(round(CLIP_SECONDS * target_sr))
+        self.avoid_same_track   = avoid_same_track
+        self.rms_normalize      = rms_normalize
+        self._synthetic         = _synthetic
 
         if _synthetic:
-            # fabricate a tiny manifest so the pipeline runs without data
+            # fabricate a tiny in-memory manifest so tests run without data
             self.segments = [{"path": f"synthetic_{i}", "offset": 0, "sr": target_sr}
                              for i in range(64)]
             return
@@ -183,7 +200,8 @@ class MoMFMADataset(torch.utils.data.Dataset):
             wav = wav.repeat(2, 1)
         elif wav.shape[0] > 2:
             wav = wav[:2]
-        # random 6 s sub-crop within the (up to) 10 s window
+
+        # random L s sub-crop within the (up to) 10 s window
         if wav.shape[1] < self.L:
             wav = torch.nn.functional.pad(wav, (0, self.L - wav.shape[1]))
         start = random.randint(0, wav.shape[1] - self.L)
@@ -207,6 +225,6 @@ class MoMFMADataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         x1 = self._load_crop(self.segments[idx])
         x2 = self._load_crop(self.segments[self._pick_other(idx)])
-        mom = x1 + x2                                          # [2, L]
-        mixtures = torch.stack([x1, x2], dim=0)               # [2, 2, L]
+        mom = x1 + x2                                       # [2, L]
+        mixtures = torch.stack([x1, x2], dim=0)      # [2, 2, L]
         return mom, mixtures

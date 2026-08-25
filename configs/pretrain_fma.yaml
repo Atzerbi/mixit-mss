@@ -1,38 +1,46 @@
-# Example config for MixIT pre-training on FMA (Saijo & Bando, Sec. 4.1 & 4.3).
+# Config to reproduce "Is MixIT Really Unsuitable for Correlated Sources?"
+# (Saijo & Bando, arXiv:2505.07631) - MEDIUM model, pre-training stage.
+# Cross-checked against the paper text AND the parameter count (~15.0M separator).
 
-# Stage 0 — offline manifest (scripts/build_fma_manifest.py)
+# Stage 0 - offline FMA manifest (scripts/build_fma_manifest.py)
 preprocess:
-  clip_dir: /path/to/fma_large    # FMA audio root ("large" subset in the paper)
+  clip_dir: /path/to/fma_large
   manifest_out: fma_manifest.json
-  target_sr: 44100                # drop < 44.1 kHz, downsample > 44.1 kHz
-  clip_seconds: 10.0              # segment length
-  overlap_seconds: 5.0            # segment overlap
-  silence_interval: 1.0           # power computed over 1 s intervals
-  max_silence_seconds: 5.0        # discard segment if > 5 s silence
-  silence_threshold: 1.0e-4       # tune to your data (MP3-sourced FMA)
+  target_sr: 44100
+  clip_seconds: 10.0
+  overlap_seconds: 5.0
+  silence_interval: 1.0
+  max_silence_seconds: 5.0
+  silence_threshold: 1.0e-4
 
-# Stage 1 — pre-training
+# Stage 1 - pre-training
 data:
   manifest: fma_manifest.json
-  train_seconds: 6.0              # training input length (NOT 10)
-  channels: 2                     # stereo, M=2
+  train_seconds: 6.0
+  channels: 2
 
-model:
-  n_srcs: 12                      # over-provisioned outputs (N >> K=4)
+model:                            # BS-Locoformer MEDIUM (paper Sec. 4.2)
+  n_srcs: 12
   stereo: true
-  n_layers: 6                     # medium model (B=6, D=128 in the paper)
-  emb_dim: 128
-  stft_size: 2048                 # must match external STFT n_fft
+  n_layers: 6                     # B = 6
+  emb_dim: 128                    # D = 128
+  ffn_hidden_dim: 384             # C = 384 (gives 15.0M; paper text says 192 but
+                                  #   that yields 7.9M, inconsistent with stated 15.0M)
+  conv1d_kernel: 8                # K = 8
+  n_heads: 8                      # H = 8
+  num_groups: 8                   # G = 8
+  attention_dim: 128
+  stft_size: 2048                 # ~46 ms @ 44.1 kHz (paper does not state music STFT)
   hop_length: 512
-  # band_split: Q=62 bands (fixed inside the model)
 
-train:
-  batch_size: 128                 # paper value (needs multiple GPUs)
-  lr: 1.0e-3                      # peak (5e-4 for the large model)
-  lambda_sparse: 0.1              # sparsity loss weight (tune)
-  steps: 150000                   # ~150 epochs * ~1000 steps
-  warmup_steps: 5000              # linear 0 -> peak
-  lr_decay_per_epoch: 0.965
-  weight_decay: 1.0e-2            # AdamW
-  grad_clip_l2: 5.0
+train:                            # paper Sec. 4.3
+  epochs: 150
+  steps_per_epoch: 1000
+  batch_size_effective: 128       # = batch_size * accum_steps
+  lr: 1.0e-3
+  warmup_steps: 5000
+  lr_decay: 0.965
+  weight_decay: 1.0e-2
+  clip_grad: 5.0
+  lambda_sparse: 0.0              # paper uses no sparsity in pre-training
   optimizer: adamw
