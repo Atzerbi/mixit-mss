@@ -21,7 +21,7 @@ The defaults reproduce the paper's medium-model schedule:
     gradient L2-norm clipped to 5    --clip_grad
     thresholded-SNR loss only        --lambda_sparse 0 (paper uses no sparsity here)
 
-A "step" is one *optimiser update*: with --accum_steps k each step consumes k
+A "step" is one *optimizer update*: with --accum_steps k each step consumes k
 micro-batches, so the effective batch is batch_size * k. That is what makes the
 paper's batch of 128 reachable on a single GPU.
 
@@ -36,6 +36,16 @@ Checkpointing / resuming
     An older run that only saved weights can still be continued by declaring where
     it stopped, which re-places the lr schedule (the AdamW moments are gone):
         ... --resume pretrained_mixit.pth --start_step 25000
+    To recover the hyperparameters of an interrupted run, this code snippet prints
+    them for you:
+        import torch
+        ck = torch.load("pretrained_mixit.pth.ckpt", map_location="cpu", weights_only=True)
+        print("step:", ck["step"])
+        for k in ("batch_size", "accum_steps", "lr", "warmup_steps", "lr_decay",
+          "weight_decay", "clip_grad", "steps_per_epoch", "epochs", "steps",
+          "n_srcs", "n_layers", "emb_dim", "stft_size", "hop_length",
+          "train_seconds", "lambda_sparse", "manifest"):
+        print(f"  {k:16s} {ck['args'][k]}")
 """
 
 import argparse
@@ -48,7 +58,6 @@ from mixit_mss.datasets import MoMDataset
 from mixit_mss.fma import MoMFMADataset
 from mixit_mss.losses import efficient_mixit_loss, sparsity_loss
 from mixit_mss.separator_adapter import build_stub_adapter, build_bslocoformer_adapter
-
 
 def build_model(args, device):
     """Builds the separator.
@@ -80,7 +89,6 @@ def lr_lambda(warmup_steps, steps_per_epoch, decay):
         return warm * (decay ** (step // steps_per_epoch))
     return fn
 
-
 def atomic_save(obj, path):
     """torch.save via a temporary file + rename.
 
@@ -93,7 +101,6 @@ def atomic_save(obj, path):
     torch.save(obj, tmp)
     os.replace(tmp, path)
 
-
 def save_all(model, opt, sched, step, args):
     """Weights (for inference/fine-tuning) + full training state (for --resume)."""
     atomic_save(model.state_dict(), args.out)
@@ -102,7 +109,6 @@ def save_all(model, opt, sched, step, args):
                  "scheduler": sched.state_dict(),
                  "step": step,
                  "args": vars(args)}, args.ckpt_out)
-
 
 def build_scheduler(opt, args, start_step):
     """LambdaLR placed directly at `start_step` instead of stepped there in a loop."""
@@ -114,7 +120,6 @@ def build_scheduler(opt, args, start_step):
     # __init__ steps once, so last_epoch lands on start_step: the same lr the
     # interrupted run was using when it stopped.
     return torch.optim.lr_scheduler.LambdaLR(opt, lam, last_epoch=start_step - 1)
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -200,6 +205,7 @@ def main():
                         n_channels=args.channels, _synthetic=args.synthetic)
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, drop_last=True)
 
+    # Build model (BSLocoformer)
     model = build_model(args, device)
 
     total_steps = args.steps or args.epochs * args.steps_per_epoch

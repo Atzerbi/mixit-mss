@@ -4,3 +4,5 @@ __pycache__/
 *.ckpt
 .venv/
 .DS_Store
+runs
+.claude

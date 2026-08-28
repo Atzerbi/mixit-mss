@@ -40,6 +40,8 @@ class Separator:
         self.sr = sr
         self.channel_map = channel_map      # dict stem->channel index, or None
         self.device = device
+        # number of audio channels (2 = stereo); read from the adapter when present
+        self.n_channels = getattr(model, "C", 2)
 
     @property
     def is_finetuned(self):

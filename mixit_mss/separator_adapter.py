@@ -14,9 +14,7 @@ loss (which compares waveforms) stays unchanged.
 
 import torch
 import torch.nn as nn
-
 from .stft import STFT
-
 
 class SeparatorAdapter(nn.Module):
     def __init__(self, separator, n_srcs, n_channels=2, stereo=True,
@@ -55,7 +53,6 @@ class SeparatorAdapter(nn.Module):
             wav = self.stft.decode(flat, length=L)          # [B*C*N, 1, L]
             wav = wav.reshape(B, C, N, L).permute(0, 2, 1, 3)   # [B, N, C, L]
             return wav.contiguous()
-
 
 # ---------------------------------------------------------------------------
 # Convenience builders
@@ -105,7 +102,6 @@ class _StubTFSeparator(nn.Module):
             B, T, Fr = spec.shape
             out = spec.unsqueeze(1).expand(B, self.n_srcs, T, Fr) * self.scale
         return out.contiguous()
-
 
 def build_stub_adapter(n_srcs=12, n_channels=2, stereo=True,
                        n_fft=2048, hop_length=512):
